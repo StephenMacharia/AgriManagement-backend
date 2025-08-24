@@ -1,8 +1,7 @@
 from typing import Optional
-from pydantic import BaseModel
 from app.schemas.base import BaseSchema, TimestampSchema
 
-class ProductBase(BaseModel):
+class ProductBase(BaseSchema):
     name: str
     description: Optional[str] = None
     category: str
@@ -14,7 +13,7 @@ class ProductBase(BaseModel):
 class ProductCreate(ProductBase):
     pass
 
-class ProductUpdate(BaseModel):
+class ProductUpdate(BaseSchema):
     name: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
