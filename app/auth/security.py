@@ -15,7 +15,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")  # ✅ fixed
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")  # ✅ FIXED: Changed from "/login" to "/auth/login"
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -31,7 +31,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)  # ✅ fixed
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -45,14 +45,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")   # ✅ match what we store
-        if email is None:
+        username: str = payload.get("sub")   # ✅ FIXED: Using username consistently
+        if username is None:
             raise credentials_exception
-        token_data = TokenData(username=email)
+        token_data = TokenData(username=username)
     except JWTError:
         raise credentials_exception
     
-    user = db.query(UserModel).filter(UserModel.email == token_data.username).first()
+    # ✅ FIXED: Changed from email to username filter
+    user = db.query(UserModel).filter(UserModel.username == token_data.username).first()
     if user is None:
         raise credentials_exception
     return user

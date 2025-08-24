@@ -1,0 +1,1 @@
+here is how to start the virtual environment--venv/Scripts/activate

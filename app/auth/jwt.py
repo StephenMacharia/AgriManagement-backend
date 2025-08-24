@@ -58,6 +58,7 @@ async def login_token_only(
     return {"access_token": access_token, "token_type": "bearer"}
 
 # REGISTER: create user + return user + token
+# REGISTER: create user + return user + token
 @router.post("/register", response_model=UserWithToken)
 async def register_user(
     user_data: UserCreate,
@@ -73,13 +74,15 @@ async def register_user(
         )
 
     hashed_password = get_password_hash(user_data.password)
+    
+    # ✅ FIXED: Use role from user input if provided, otherwise default to "farmer"
     db_user = User(
         username=user_data.username,
         email=user_data.email,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
         phone_number=user_data.phone_number,
-        role="farmer",  # default
+        role=user_data.role if user_data.role else "farmer",  # ✅ Use input role or default
     )
 
     db.add(db_user)

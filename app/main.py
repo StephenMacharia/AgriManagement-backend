@@ -46,4 +46,4 @@ app.include_router(reports.router, prefix="/reports", tags=["reports"])
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to AgriLink360 API"}
+    return {"message": "Welcome to AgriBusiness API"}
