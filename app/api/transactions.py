@@ -1,28 +1,28 @@
+# app/api/routes/transactions.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
 from decimal import Decimal
 from app.db.session import get_db
-from app.models.transaction import (
-    #User, Product, Produce, 
-    Transaction, TransactionItem, Commission
-)
+from app.models.transaction import Transaction, TransactionItem, Commission
 from app.models.user import User
 from app.models.product import Product
 from app.models.produce import Produce
 from app.models.credit import CreditAccount
 from app.schemas.transaction import (
-    Transaction, TransactionCreate, TransactionItem, CommissionBase
+    Transaction as TransactionSchema,
+    TransactionCreate,
+    TransactionItem as TransactionItemSchema,
 )
-from app.auth.security import get_current_active_user, is_admin, is_salesperson, is_farmer
+from app.auth.security import get_current_active_user
 
 router = APIRouter()
 
 # Commission rate (5%)
 COMMISSION_RATE = Decimal('0.05')
 
-@router.post("/", response_model=Transaction)
+@router.post("/", response_model=TransactionSchema)
 def create_transaction(
     transaction: TransactionCreate,
     db: Session = Depends(get_db),
@@ -30,7 +30,7 @@ def create_transaction(
 ):
     # Validate transaction type and user role
     if transaction.transaction_type == "product_purchase":
-        if current_user.role not in ["farmer", "salesperson"]:
+        if current_user.role not in ["admin", "salesperson"]:
             raise HTTPException(
                 status_code=403,
                 detail="Only farmers and salespersons can create product purchases"
@@ -50,6 +50,12 @@ def create_transaction(
     
     for item in transaction.items:
         if transaction.transaction_type == "product_purchase":
+            if item.product_id is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Product ID is required for product purchases"
+                )
+            
             # For product purchases, verify product exists and has enough stock
             product = db.query(Product).filter(Product.id == item.product_id).first()
             if not product:
@@ -60,17 +66,18 @@ def create_transaction(
             if product.quantity_in_stock < item.quantity:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Not enough stock for product {product.name}"
+                    detail=f"Not enough stock for product {product.name}. Available: {product.quantity_in_stock}, Requested: {item.quantity}"
                 )
             
-            item.unit_price = product.price
-            total_amount += Decimal(str(item.quantity)) * Decimal(str(product.price))
+            # Use the provided unit_price or fall back to product price
+            unit_price = Decimal(str(item.unit_price)) if item.unit_price else Decimal(str(product.price))
+            total_amount += Decimal(str(item.quantity)) * unit_price
             
             # Prepare item for creation
             items_to_create.append({
                 "product_id": product.id,
                 "quantity": item.quantity,
-                "unit_price": product.price
+                "unit_price": float(unit_price)
             })
             
             # Update product stock
@@ -78,6 +85,12 @@ def create_transaction(
             db.add(product)
         
         elif transaction.transaction_type == "produce_sale":
+            if item.produce_id is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Produce ID is required for produce sales"
+                )
+            
             # For produce sales, verify produce exists and is available
             produce = db.query(Produce).filter(Produce.id == item.produce_id).first()
             if not produce:
@@ -90,20 +103,28 @@ def create_transaction(
                     status_code=400,
                     detail=f"Produce {produce.name} is not available"
                 )
+            if produce.quantity < item.quantity:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Not enough quantity for produce {produce.name}. Available: {produce.quantity}, Requested: {item.quantity}"
+                )
             
-            item.unit_price = produce.price_per_unit
-            total_amount += Decimal(str(item.quantity)) * Decimal(str(produce.price_per_unit))
+            # Use the provided unit_price or fall back to produce price
+            unit_price = Decimal(str(item.unit_price)) if item.unit_price else Decimal(str(produce.price_per_unit))
+            total_amount += Decimal(str(item.quantity)) * unit_price
             
             # Prepare item for creation
             items_to_create.append({
                 "produce_id": produce.id,
                 "quantity": item.quantity,
-                "unit_price": produce.price_per_unit
+                "unit_price": float(unit_price)
             })
             
-            # Mark produce as sold
-            produce.is_available = False
-            produce.quantity = 0  # Assuming all quantity is sold
+            # Update produce quantity
+            produce.quantity -= item.quantity
+            if produce.quantity <= 0:
+                produce.is_available = False
+                produce.quantity = 0
             db.add(produce)
     
     # Verify payment method
@@ -126,17 +147,17 @@ def create_transaction(
             )
         
         available_credit = credit_account.credit_limit - credit_account.current_balance
-        if Decimal(str(total_amount)) > available_credit:
+        if total_amount > available_credit:
             raise HTTPException(
                 status_code=400,
-                detail="Insufficient credit limit for this purchase"
+                detail=f"Insufficient credit limit for this purchase. Available: {available_credit}, Required: {total_amount}"
             )
         
         # Update credit balance
-        credit_account.current_balance += Decimal(str(total_amount))
+        credit_account.current_balance += total_amount
         db.add(credit_account)
     
-    # Create transaction
+    # Create transaction - the timestamps will be automatically set by SQLAlchemy defaults
     db_transaction = Transaction(
         transaction_type=transaction.transaction_type,
         user_id=current_user.id,
@@ -144,10 +165,10 @@ def create_transaction(
         payment_method=transaction.payment_method,
         status=transaction.status,
         notes=transaction.notes
+        # created_at and updated_at will be set automatically by the model defaults
     )
     db.add(db_transaction)
-    db.commit()
-    db.refresh(db_transaction)
+    db.flush()  # Flush to get the ID without committing
     
     # Create transaction items
     for item_data in items_to_create:
@@ -159,7 +180,7 @@ def create_transaction(
     
     # For produce sales, create commission record
     if transaction.transaction_type == "produce_sale":
-        commission_amount = Decimal(str(total_amount)) * COMMISSION_RATE
+        commission_amount = total_amount * COMMISSION_RATE
         admin_user = db.query(User).filter(User.role == "admin").first()
         
         if admin_user:
@@ -168,13 +189,15 @@ def create_transaction(
                 amount=float(commission_amount),
                 commission_rate=float(COMMISSION_RATE),
                 beneficiary_id=admin_user.id
+                # created_at and updated_at will be set automatically
             )
             db.add(db_commission)
     
     db.commit()
+    db.refresh(db_transaction)
     return db_transaction
 
-@router.get("/", response_model=List[Transaction])
+@router.get("/", response_model=List[TransactionSchema])
 def read_transactions(
     skip: int = 0,
     limit: int = 100,
@@ -207,7 +230,7 @@ def read_transactions(
     transactions = query.order_by(Transaction.created_at.desc()).offset(skip).limit(limit).all()
     return transactions
 
-@router.get("/{transaction_id}", response_model=Transaction)
+@router.get("/{transaction_id}", response_model=TransactionSchema)
 def read_transaction(
     transaction_id: int,
     db: Session = Depends(get_db),
@@ -222,3 +245,21 @@ def read_transaction(
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
     return db_transaction
+
+@router.get("/user/{user_id}", response_model=List[TransactionSchema])
+def read_user_transactions(
+    user_id: int,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    # Check permissions
+    if current_user.role != "admin" and current_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    transactions = db.query(Transaction).filter(
+        Transaction.user_id == user_id
+    ).order_by(Transaction.created_at.desc()).offset(skip).limit(limit).all()
+    
+    return transactions
