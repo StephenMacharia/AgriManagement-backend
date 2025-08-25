@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from decimal import Decimal
 from app.db.session import get_db
-from app.models.credit import  CreditAccount, CreditRepayment
+from app.models.credit import CreditAccount as CreditAccountModel, CreditRepayment as CreditRepaymentModel
 from app.models.user import User
 from app.schemas.credit import (
     CreditAccount, CreditAccountCreate, CreditAccountUpdate,
@@ -32,8 +32,8 @@ def create_credit_account(
         )
     
     # Check if farmer already has a credit account
-    existing_account = db.query(CreditAccount).filter(
-        CreditAccount.farmer_id == credit_account.farmer_id
+    existing_account = db.query(CreditAccountModel).filter(
+        CreditAccountModel.farmer_id == credit_account.farmer_id
     ).first()
     
     if existing_account:
@@ -42,7 +42,7 @@ def create_credit_account(
             detail="Farmer already has a credit account"
         )
     
-    db_account = CreditAccount(
+    db_account = CreditAccountModel(
         farmer_id=credit_account.farmer_id,
         credit_limit=credit_account.credit_limit,
         current_balance=credit_account.current_balance,
@@ -61,16 +61,16 @@ def read_credit_accounts(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    query = db.query(CreditAccount)
+    query = db.query(CreditAccountModel)
     
     if farmer_id:
         # Only admin can filter by other farmers
         if current_user.role != "admin" and current_user.id != farmer_id:
             raise HTTPException(status_code=403, detail="Not enough permissions")
-        query = query.filter(CreditAccount.farmer_id == farmer_id)
+        query = query.filter(CreditAccountModel.farmer_id == farmer_id)
     elif current_user.role == "farmer":
         # Farmers can only see their own credit account
-        query = query.filter(CreditAccount.farmer_id == current_user.id)
+        query = query.filter(CreditAccountModel.farmer_id == current_user.id)
     elif current_user.role == "salesperson":
         # Salespersons can see all credit accounts
         pass
@@ -85,7 +85,7 @@ def read_credit_account(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    db_account = db.query(CreditAccount).filter(CreditAccount.id == account_id).first()
+    db_account = db.query(CreditAccountModel).filter(CreditAccountModel.id == account_id).first()
     if db_account is None:
         raise HTTPException(status_code=404, detail="Credit account not found")
     
@@ -103,7 +103,7 @@ def update_credit_account(
     db: Session = Depends(get_db),
     current_user: User = Depends(is_admin)
 ):
-    db_account = db.query(CreditAccount).filter(CreditAccount.id == account_id).first()
+    db_account = db.query(CreditAccountModel).filter(CreditAccountModel.id == account_id).first()
     if db_account is None:
         raise HTTPException(status_code=404, detail="Credit account not found")
     
@@ -123,8 +123,8 @@ def create_credit_repayment(
     current_user: User = Depends(is_salesperson)
 ):
     # Verify credit account exists
-    credit_account = db.query(CreditAccount).filter(
-        CreditAccount.id == repayment.credit_account_id
+    credit_account = db.query(CreditAccountModel).filter(
+        CreditAccountModel.id == repayment.credit_account_id
     ).first()
     
     if not credit_account:
@@ -148,7 +148,7 @@ def create_credit_repayment(
         )
     
     # Create repayment record
-    db_repayment = CreditRepayment(
+    db_repayment = CreditRepaymentModel(
         credit_account_id=repayment.credit_account_id,
         amount=repayment.amount,
         repayment_method=repayment.repayment_method,
@@ -172,12 +172,12 @@ def read_credit_repayments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    query = db.query(CreditRepayment)
+    query = db.query(CreditRepaymentModel)
     
     if account_id:
         # Verify permissions
-        credit_account = db.query(CreditAccount).filter(
-            CreditAccount.id == account_id
+        credit_account = db.query(CreditAccountModel).filter(
+            CreditAccountModel.id == account_id
         ).first()
         
         if not credit_account:
@@ -187,17 +187,17 @@ def read_credit_repayments(
             current_user.id != credit_account.farmer_id):
             raise HTTPException(status_code=403, detail="Not enough permissions")
         
-        query = query.filter(CreditRepayment.credit_account_id == account_id)
+        query = query.filter(CreditRepaymentModel.credit_account_id == account_id)
     elif current_user.role == "farmer":
         # Farmers can only see their own repayments
-        credit_account = db.query(CreditAccount).filter(
-            CreditAccount.farmer_id == current_user.id
+        credit_account = db.query(CreditAccountModel).filter(
+            CreditAccountModel.farmer_id == current_user.id
         ).first()
         
         if credit_account:
             query = query.filter(
-                CreditRepayment.credit_account_id == credit_account.id
+                CreditRepaymentModel.credit_account_id == credit_account.id
             )
     
-    repayments = query.order_by(CreditRepayment.created_at.desc()).offset(skip).limit(limit).all()
+    repayments = query.order_by(CreditRepaymentModel.created_at.desc()).offset(skip).limit(limit).all()
     return repayments
